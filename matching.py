@@ -136,7 +136,14 @@ def safe_float(val, default=0.0):
 
 def substitute_teams_in_title(title, sport_prefix):
     """Replace city names with team names in a Kalshi market title."""
-    mapping = NBA_CITY_TO_TEAM_DISPLAY if sport_prefix == "NBA" else NHL_CITY_TO_TEAM_DISPLAY
+    if sport_prefix == "NBA":
+        mapping = NBA_CITY_TO_TEAM_DISPLAY
+    elif sport_prefix == "NHL":
+        mapping = NHL_CITY_TO_TEAM_DISPLAY
+    elif sport_prefix == "MLB":
+        mapping = MLB_CITY_TO_TEAM_DISPLAY
+    else:
+        return title
     for city in sorted(mapping, key=len, reverse=True):
         pattern = re.compile(re.escape(city), re.IGNORECASE)
         if pattern.search(title):
@@ -152,14 +159,22 @@ def _extract_poly_team_names(title):
     return None, None
 
 
-def _kalshi_title_to_teams(title, sport_prefix):
-    """Parse Kalshi 'CityA at CityB ...' → set of team names (lowercase)."""
+def _kalshi_title_to_teams(title, sport_prefix, mapping=None):
+    """Parse Kalshi 'CityA vs CityB ...' → set of team names (lowercase)."""
     match = re.match(r"^(.+?)\s+(?:at|vs\.?)\s+(.+?)(?:\s*[:?]|\s+Winner|\s+Total|\s+Spread)", title, re.I)
     if not match:
         return set()
     city1 = match.group(1).strip().lower()
     city2 = match.group(2).strip().lower()
-    mapping = NBA_CITY_TO_TEAM if sport_prefix == "NBA" else NHL_CITY_TO_TEAM
+    if mapping is None:
+        if sport_prefix == "NBA":
+            mapping = NBA_CITY_TO_TEAM
+        elif sport_prefix == "NHL":
+            mapping = NHL_CITY_TO_TEAM
+        elif sport_prefix == "MLB":
+            mapping = MLB_CITY_TO_TEAM
+        else:
+            return set()
     teams = set()
     for city in [city1, city2]:
         if city in mapping:
