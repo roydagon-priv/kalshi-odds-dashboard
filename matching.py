@@ -254,18 +254,8 @@ def build_polymarket_index(poly_events):
     return index, spread_index
 
 
-def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None):
-    """Try to find a matching Polymarket market for a Kalshi market dict.
-
-    For game-winner markets, match by team pair.
-    For totals, also match by O/U threshold (floor_strike).
-    For spreads, use spread_index keyed by (favored_team, line).
-    Returns a dict with poly_yes, poly_no, poly_volume or None.
-    """
-    sport_prefix = kalshi_data["sport"].split(" - ")[0]  # NBA, NHL, F1
-    if sport_prefix not in ("NBA", "NHL"):
-        return None
-
+def _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix):
+    """Match NBA, NHL, or MLB Kalshi market to Polymarket."""
     sport_cat = kalshi_data["sport"]
     target_type = "moneyline"
     if "Total" in sport_cat:
@@ -273,10 +263,21 @@ def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=No
     elif "Spread" in sport_cat:
         target_type = "spreads"
 
+    # Select mapping and team_names by sport — explicit chain avoids silent fallthrough
+    if sport_prefix == "NBA":
+        mapping = NBA_CITY_TO_TEAM
+        team_names = NBA_TEAM_NAMES
+    elif sport_prefix == "NHL":
+        mapping = NHL_CITY_TO_TEAM
+        team_names = NHL_TEAM_NAMES
+    elif sport_prefix == "MLB":
+        mapping = MLB_CITY_TO_TEAM
+        team_names = MLB_TEAM_NAMES
+    else:
+        return None
+
     if target_type == "spreads" and spread_index is not None:
         title_lower = kalshi_data["title"].lower()
-        mapping = NBA_CITY_TO_TEAM if sport_prefix == "NBA" else NHL_CITY_TO_TEAM
-        team_names = NBA_TEAM_NAMES if sport_prefix == "NBA" else NHL_TEAM_NAMES
 
         kalshi_team = None
         for team in sorted(team_names, key=len, reverse=True):
@@ -362,7 +363,7 @@ def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=No
             }
 
     detail = kalshi_data.get("detail", "").lower()
-    mapping = NBA_CITY_TO_TEAM if sport_prefix == "NBA" else NHL_CITY_TO_TEAM
+    # mapping and team_names already set at function top
 
     kalshi_yes_team = None
     for city, team in mapping.items():
@@ -370,7 +371,7 @@ def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=No
             kalshi_yes_team = team
             break
     if not kalshi_yes_team:
-        for team in (NBA_TEAM_NAMES if sport_prefix == "NBA" else NHL_TEAM_NAMES):
+        for team in team_names:
             if team in detail:
                 kalshi_yes_team = team
                 break
@@ -406,3 +407,20 @@ def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=No
             "poly_volume": best["volume"],
             "poly_question": best["question"],
         }
+
+
+def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike):
+    """Match MLB Kalshi market to Polymarket. Same structure as NBA/NHL."""
+    return _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, "MLB")
+
+
+def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None):
+    """Dispatch to per-sport matching handler."""
+    sport_prefix = kalshi_data["sport"].split(" - ")[0]
+    if sport_prefix in ("NBA", "NHL"):
+        return _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix)
+    if sport_prefix == "MLB":
+        return _match_mlb(kalshi_data, poly_index, spread_index, floor_strike)
+    if sport_prefix == "UCL":
+        return _match_ucl(kalshi_data, poly_index, spread_index, floor_strike)
+    return None
