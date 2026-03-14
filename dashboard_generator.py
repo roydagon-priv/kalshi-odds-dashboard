@@ -67,16 +67,22 @@ def extract_market_data(market, sport_name="", poly_match=None):
 
     # Market type: winner / totals / spread / other
     sport_cat = sport_name.lower()
+    title_lower = market.get("title", "").lower()
+    sub_title_lower = (market.get("yes_sub_title") or "").lower()
     if "total" in sport_cat:
         market_type = "totals"
     elif "spread" in sport_cat:
         market_type = "spread"
+    elif sub_title_lower == "tie":
+        # UCL draw markets: yes_sub_title is "Tie", sport_name contains "winner"
+        # Draw check must come BEFORE the winner check or it would never fire
+        market_type = "draw"
     elif "winner" in sport_cat or "game" in sport_cat:
         market_type = "winner"
     else:
         market_type = "other"
 
-    if poly_yes is not None and poly_no is not None and market_type != "winner":
+    if poly_yes is not None and poly_no is not None and market_type not in ("winner", "draw"):
         cost_dir1 = yes_ask + poly_no    # buy YES on Kalshi, NO on Poly
         cost_dir2 = poly_yes + no_ask    # buy YES on Poly, NO on Kalshi
         arb_spread_cents = (1.0 - min(cost_dir1, cost_dir2)) * 100
@@ -84,7 +90,16 @@ def extract_market_data(market, sport_name="", poly_match=None):
         arb_spread_cents = None
 
     raw_title = market.get("title", "")
-    sport_prefix = "NBA" if "NBA" in sport_name.upper() else ("NHL" if "NHL" in sport_name.upper() else "")
+    if "NBA" in sport_name.upper():
+        sport_prefix = "NBA"
+    elif "NHL" in sport_name.upper():
+        sport_prefix = "NHL"
+    elif "MLB" in sport_name.upper():
+        sport_prefix = "MLB"
+    elif "UCL" in sport_name.upper():
+        sport_prefix = "UCL"
+    else:
+        sport_prefix = ""
     display_title = substitute_teams_in_title(raw_title, sport_prefix) if sport_prefix else raw_title
 
     return {
@@ -157,7 +172,7 @@ def generate_html(markets_data, timestamp, prev_prices=None):
 
     type_toggles = ''.join(
         f'<button class="filter-btn multi-toggle" data-group="type" data-value="{val}" onclick="multiToggle(\'type\',\'{val}\',this)">{label}</button>'
-        for val, label in [("winner", "Winner"), ("totals", "Totals"), ("spread", "Spread")]
+        for val, label in [("winner", "Winner"), ("draw", "Draw"), ("totals", "Totals"), ("spread", "Spread")]
     )
     type_group_html = f'<div class="filter-group"><span class="filter-label">Market Type</span><div class="toggle-group" id="group-type">{type_toggles}</div></div>'
 
@@ -198,6 +213,10 @@ def generate_html(markets_data, timestamp, prev_prices=None):
             # "Nets at Pistons — Detroit"
             name_line1 = f'{base_title} — {detail}'
             name_line2 = f'Winner · {date_label}' if date_label else 'Winner'
+        elif mtype == "draw":
+            # "Bayern Munich vs Atalanta — Draw · Mar 18"
+            name_line1 = f'{base_title} — Draw'
+            name_line2 = date_label if date_label else ''
         elif mtype == "totals" and detail:
             name_line1 = base_title
             name_line2 = f'{detail} · {date_label}' if date_label else detail
@@ -224,7 +243,7 @@ def generate_html(markets_data, timestamp, prev_prices=None):
 
         arb_cell = f'{m["arb_spread_cents"]:.1f}¢' if m["arb_spread_cents"] is not None else '<span class="na">N/A</span>'
 
-        is_winner = m["market_type"] == "winner"
+        is_winner = m["market_type"] in ("winner", "draw")
 
         # Platform spread: American odds point difference, YES-only for winner markets
         def _odds_diff(k_price, p_price, side):
