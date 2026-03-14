@@ -25,6 +25,12 @@ TARGET_SERIES = {
     "F1 - Podium":           "KXF1RACEPODIUM",
     "F1 - Top 5":            "KXF1TOP5",
     "F1 - Top 10":           "KXF1TOP10",
+    "MLB - Game Winner":     "KXMLBGAME",
+    "MLB - Total Runs":      "KXMLBTOTAL",
+    "MLB - Run Line":        "KXMLBSPREAD",
+    "UCL - Match Winner":    "KXUCLGAME",
+    "UCL - Total Goals":     "KXUCLTOTAL",
+    "UCL - Spread":          "KXUCLSPREAD",
 }
 
 
