@@ -248,9 +248,29 @@ def build_polymarket_index(poly_events):
                 clean_q = re.sub(r":\s*O/U\s+[\d.]+\s*$", "", question).strip()
                 t1, t2 = _extract_poly_team_names(clean_q)
                 if not t1 or not t2:
+                    # Fallback: try parsing from event title (e.g. soccer moneylines
+                    # use "Will Team win on DATE?" with no "vs." in the question)
+                    event_title = re.sub(r"\s*-\s*More Markets\s*$", "", event.get("title", ""), flags=re.I).strip()
+                    t1, t2 = _extract_poly_team_names(event_title)
+                if not t1 or not t2:
                     continue
                 key = frozenset([t1, t2])
                 index.setdefault(key, []).append(entry)
+    # Debug: sample unindexed UCL questions (remove after tuning)
+    _INDEXED_TYPES = {"moneyline", "totals", "spreads"}  # extend if you added more above
+    _unindexed = [
+        mkt.get("question", "")
+        for event in poly_events
+        for mkt in event.get("markets", [])
+        if mkt.get("sportsMarketType") not in _INDEXED_TYPES
+        and ("ucl" in mkt.get("question", "").lower() or "champions" in mkt.get("question", "").lower())
+    ]
+    if _unindexed:
+        import sys
+        print(f"  [debug] {len(_unindexed)} UCL markets not indexed. Samples:", file=sys.stderr)
+        for q in _unindexed[:3]:
+            print(f"    {q!r}", file=sys.stderr)
+
     return index, spread_index
 
 
@@ -412,6 +432,159 @@ def _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_pr
 def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike):
     """Match MLB Kalshi market to Polymarket. Same structure as NBA/NHL."""
     return _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, "MLB")
+
+
+def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
+    """Match UCL Kalshi market to Polymarket.
+
+    Polymarket soccer match structure (observed):
+    - Moneyline: sportsMarketType='moneyline', outcomes=["Yes","No"],
+        question="Will Team A win on DATE?" (one per team) or
+        question="Will Team A vs. Team B end in a draw?"
+    - Totals: sportsMarketType='totals', outcomes=["Over","Under"],
+        question="Team A vs. Team B: O/U N.5"
+    - Spreads: sportsMarketType='spreads', outcomes=[team1, team2],
+        question="Spread: Team A (-N.5)"
+
+    Kalshi UCL titles: "Bayern Munich vs Atalanta Winner?"
+    Draw markets: detail (yes_sub_title) == "Tie"
+    """
+    sport_cat = kalshi_data["sport"]
+    title = kalshi_data["title"]
+    detail_lower = kalshi_data.get("detail", "").lower()
+
+    # Determine market type from Kalshi sport category
+    if "Total" in sport_cat:
+        target_type = "totals"
+    elif "Spread" in sport_cat:
+        target_type = "spreads"
+    else:
+        target_type = "moneyline"
+
+    # Extract club names from Kalshi title: "Bayern Munich vs Atalanta Winner?"
+    match = re.match(
+        r"^(.+?)\s+(?:at|vs\.?)\s+(.+?)(?:\s*[:?]|\s+Winner|\s+Total|\s+Spread|\s+Goals)",
+        title, re.I,
+    )
+    if not match:
+        return None
+    club1 = match.group(1).strip().lower()
+    club2 = match.group(2).strip().lower()
+
+    is_draw = detail_lower == "tie"
+
+    if target_type == "spreads" and spread_index is not None:
+        line = abs(floor_strike) if floor_strike is not None else None
+        if line is None:
+            m_line = re.search(r"over\s+([\d.]+)", title, re.I)
+            line = float(m_line.group(1)) if m_line else None
+        if line is None:
+            return None
+        for club in [club1, club2]:
+            best = spread_index.get((club, line))
+            if best:
+                return {
+                    "poly_yes": best["outcome1_ask"],
+                    "poly_no": best["outcome2_ask"],
+                    "poly_volume": best["volume"],
+                    "poly_question": best["question"],
+                }
+        return None
+
+    # Build index key from club names
+    key = frozenset([club1, club2])
+    poly_markets = poly_index.get(key)
+
+    # If exact frozenset not found, try searching for markets whose question
+    # contains both club names (partial match for name variants)
+    if not poly_markets:
+        candidate_markets = []
+        for k, v in poly_index.items():
+            k_list = list(k)
+            if (
+                (club1 in k_list[0] or k_list[0] in club1)
+                and (club2 in k_list[1] or k_list[1] in club2)
+            ) or (
+                (club1 in k_list[1] or k_list[1] in club1)
+                and (club2 in k_list[0] or k_list[0] in club2)
+            ):
+                candidate_markets.extend(v)
+        poly_markets = candidate_markets if candidate_markets else None
+
+    if not poly_markets:
+        return None
+
+    if target_type == "totals" and floor_strike is not None:
+        for pm in poly_markets:
+            if pm["market_type"] == "totals" and pm["threshold"] == floor_strike:
+                # outcomes=["Over","Under"]
+                o1_lower = pm["outcome1"].lower()
+                if "over" in o1_lower:
+                    return {
+                        "poly_yes": pm["outcome1_ask"],
+                        "poly_no": pm["outcome2_ask"],
+                        "poly_volume": pm["volume"],
+                        "poly_question": pm["question"],
+                    }
+                else:
+                    return {
+                        "poly_yes": pm["outcome2_ask"],
+                        "poly_no": pm["outcome1_ask"],
+                        "poly_volume": pm["volume"],
+                        "poly_question": pm["question"],
+                    }
+        return None
+
+    # Moneyline: outcomes=["Yes","No"], club name is in the question text
+    if is_draw:
+        # Find the draw-specific Polymarket question
+        for pm in poly_markets:
+            if pm["market_type"] != "moneyline":
+                continue
+            q_lower = pm["question"].lower()
+            if "draw" in q_lower or "tie" in q_lower:
+                return {
+                    "poly_yes": pm["outcome1_ask"],
+                    "poly_no": pm["outcome2_ask"],
+                    "poly_volume": pm["volume"],
+                    "poly_question": pm["question"],
+                }
+        return None
+
+    # Regular moneyline: find question "Will <yes_club> win ..."
+    # detail (yes_sub_title) contains the club name for the "yes" side
+    yes_club = detail_lower  # e.g. "Bayern Munich"
+
+    for pm in poly_markets:
+        if pm["market_type"] != "moneyline":
+            continue
+        q_lower = pm["question"].lower()
+        # Skip draw markets
+        if "draw" in q_lower or "tie" in q_lower:
+            continue
+        # Match by club name in question
+        if yes_club and yes_club in q_lower:
+            return {
+                "poly_yes": pm["outcome1_ask"],  # outcome1=Yes
+                "poly_no": pm["outcome2_ask"],   # outcome2=No
+                "poly_volume": pm["volume"],
+                "poly_question": pm["question"],
+            }
+
+    # Fallback: return first non-draw moneyline if no club name match
+    for pm in poly_markets:
+        if pm["market_type"] != "moneyline":
+            continue
+        q_lower = pm["question"].lower()
+        if "draw" in q_lower or "tie" in q_lower:
+            continue
+        return {
+            "poly_yes": pm["outcome1_ask"],
+            "poly_no": pm["outcome2_ask"],
+            "poly_volume": pm["volume"],
+            "poly_question": pm["question"],
+        }
+    return None
 
 
 def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None):
