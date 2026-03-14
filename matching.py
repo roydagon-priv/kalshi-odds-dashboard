@@ -36,10 +36,47 @@ NHL_CITY_TO_TEAM = {
     "utah": "mammoth", "vancouver": "canucks", "vegas": "golden knights",
     "washington": "capitals", "winnipeg": "jets",
 }
+MLB_CITY_TO_TEAM = {
+    # Single-city teams — keys are exactly what appears in Kalshi yes_sub_title (lowercased)
+    "arizona": "diamondbacks",
+    "atlanta": "braves",
+    "baltimore": "orioles",
+    "boston": "red sox",
+    "cincinnati": "reds",
+    "cleveland": "guardians",
+    "colorado": "rockies",
+    "detroit": "tigers",
+    "houston": "astros",
+    "kansas city": "royals",
+    "miami": "marlins",
+    "milwaukee": "brewers",
+    "minnesota": "twins",
+    "philadelphia": "phillies",
+    "pittsburgh": "pirates",
+    "san diego": "padres",
+    "san francisco": "giants",
+    "seattle": "mariners",
+    "st. louis": "cardinals",
+    "st louis": "cardinals",
+    "tampa bay": "rays",
+    "texas": "rangers",
+    "toronto": "blue jays",
+    "washington": "nationals",
+    # Multi-team cities — trailing initial/abbrev matches Kalshi's yes_sub_title format
+    "chicago c": "cubs",
+    "chicago ws": "white sox",
+    "los angeles d": "dodgers",
+    "los angeles a": "angels",
+    "new york y": "yankees",
+    "new york m": "mets",
+    # Athletics use team nickname only (no city prefix in Kalshi)
+    "a's": "athletics",
+}
 
 # Reverse: team name → canonical name (lowercase)
 NBA_TEAM_NAMES = set(NBA_CITY_TO_TEAM.values())
 NHL_TEAM_NAMES = set(NHL_CITY_TO_TEAM.values())
+MLB_TEAM_NAMES = set(MLB_CITY_TO_TEAM.values())
 
 # Capitalized team names for display
 NBA_CITY_TO_TEAM_DISPLAY = {k: v.title() for k, v in NBA_CITY_TO_TEAM.items()}
@@ -62,6 +99,24 @@ NBA_CITY_TO_TEAM_DISPLAY["oklahoma city"] = "Thunder"
 NBA_CITY_TO_TEAM_DISPLAY["san antonio"] = "Spurs"
 NBA_CITY_TO_TEAM_DISPLAY["trail blazers"] = "Trail Blazers"
 NBA_CITY_TO_TEAM_DISPLAY["portland"] = "Trail Blazers"
+MLB_CITY_TO_TEAM_DISPLAY = {k: v.title() for k, v in MLB_CITY_TO_TEAM.items()}
+# Fix multi-word edge cases
+MLB_CITY_TO_TEAM_DISPLAY["boston"] = "Red Sox"
+MLB_CITY_TO_TEAM_DISPLAY["chicago c"] = "Cubs"
+MLB_CITY_TO_TEAM_DISPLAY["chicago ws"] = "White Sox"
+MLB_CITY_TO_TEAM_DISPLAY["st. louis"] = "Cardinals"
+MLB_CITY_TO_TEAM_DISPLAY["st louis"] = "Cardinals"
+MLB_CITY_TO_TEAM_DISPLAY["tampa bay"] = "Rays"
+MLB_CITY_TO_TEAM_DISPLAY["toronto"] = "Blue Jays"
+MLB_CITY_TO_TEAM_DISPLAY["los angeles d"] = "Dodgers"
+MLB_CITY_TO_TEAM_DISPLAY["los angeles a"] = "Angels"
+MLB_CITY_TO_TEAM_DISPLAY["new york y"] = "Yankees"
+MLB_CITY_TO_TEAM_DISPLAY["new york m"] = "Mets"
+MLB_CITY_TO_TEAM_DISPLAY["san francisco"] = "Giants"
+MLB_CITY_TO_TEAM_DISPLAY["san diego"] = "Padres"
+MLB_CITY_TO_TEAM_DISPLAY["kansas city"] = "Royals"
+MLB_CITY_TO_TEAM_DISPLAY["arizona"] = "Diamondbacks"
+MLB_CITY_TO_TEAM_DISPLAY["a's"] = "Athletics"
 
 
 # ---------------------------------------------------------------------------
