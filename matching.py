@@ -256,25 +256,11 @@ def build_polymarket_index(poly_events):
                     continue
                 key = frozenset([t1, t2])
                 index.setdefault(key, []).append(entry)
-    # Debug: sample unindexed UCL questions (remove after tuning)
-    _INDEXED_TYPES = {"moneyline", "totals", "spreads"}  # extend if you added more above
-    _unindexed = [
-        mkt.get("question", "")
-        for event in poly_events
-        for mkt in event.get("markets", [])
-        if mkt.get("sportsMarketType") not in _INDEXED_TYPES
-        and ("ucl" in mkt.get("question", "").lower() or "champions" in mkt.get("question", "").lower())
-    ]
-    if _unindexed:
-        import sys
-        print(f"  [debug] {len(_unindexed)} UCL markets not indexed. Samples:", file=sys.stderr)
-        for q in _unindexed[:3]:
-            print(f"    {q!r}", file=sys.stderr)
 
     return index, spread_index
 
 
-def _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix):
+def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix):
     """Match NBA, NHL, or MLB Kalshi market to Polymarket."""
     sport_cat = kalshi_data["sport"]
     target_type = "moneyline"
@@ -383,7 +369,6 @@ def _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_pr
             }
 
     detail = kalshi_data.get("detail", "").lower()
-    # mapping and team_names already set at function top
 
     kalshi_yes_team = None
     for city, team in mapping.items():
@@ -431,7 +416,7 @@ def _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_pr
 
 def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike):
     """Match MLB Kalshi market to Polymarket. Same structure as NBA/NHL."""
-    return _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, "MLB")
+    return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, "MLB")
 
 
 def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
@@ -474,12 +459,9 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
     is_draw = detail_lower == "tie"
 
     if target_type == "spreads" and spread_index is not None:
-        line = abs(floor_strike) if floor_strike is not None else None
-        if line is None:
-            m_line = re.search(r"over\s+([\d.]+)", title, re.I)
-            line = float(m_line.group(1)) if m_line else None
-        if line is None:
+        if floor_strike is None:
             return None
+        line = abs(floor_strike)
         for club in [club1, club2]:
             best = spread_index.get((club, line))
             if best:
@@ -500,14 +482,11 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
     if not poly_markets:
         candidate_markets = []
         for k, v in poly_index.items():
-            k_list = list(k)
-            if (
-                (club1 in k_list[0] or k_list[0] in club1)
-                and (club2 in k_list[1] or k_list[1] in club2)
-            ) or (
-                (club1 in k_list[1] or k_list[1] in club1)
-                and (club2 in k_list[0] or k_list[0] in club2)
-            ):
+            key_list = list(k)
+            if len(key_list) < 2:
+                continue
+            if any((club1 in t or t in club1) for t in key_list) and \
+               any((club2 in t or t in club2) for t in key_list):
                 candidate_markets.extend(v)
         poly_markets = candidate_markets if candidate_markets else None
 
@@ -591,7 +570,7 @@ def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=No
     """Dispatch to per-sport matching handler."""
     sport_prefix = kalshi_data["sport"].split(" - ")[0]
     if sport_prefix in ("NBA", "NHL"):
-        return _match_nba_nhl(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix)
+        return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix)
     if sport_prefix == "MLB":
         return _match_mlb(kalshi_data, poly_index, spread_index, floor_strike)
     if sport_prefix == "UCL":
