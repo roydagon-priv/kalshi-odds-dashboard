@@ -243,7 +243,7 @@ def build_polymarket_index(poly_events):
                 line = _extract_spread_line(question)
                 if st and line is not None:
                     entry["event_title"] = event.get("title", "")
-                    spread_index[(st, line)] = entry
+                    spread_index.setdefault((st, line), []).append(entry)
             else:
                 clean_q = re.sub(r":\s*O/U\s+[\d.]+\s*$", "", question).strip()
                 t1, t2 = _extract_poly_team_names(clean_q)
@@ -266,7 +266,7 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
     target_type = "moneyline"
     if "Total" in sport_cat:
         target_type = "totals"
-    elif "Spread" in sport_cat:
+    elif "Spread" in sport_cat or "Run Line" in sport_cat:
         target_type = "spreads"
 
     # Select mapping and team_names by sport — explicit chain avoids silent fallthrough
@@ -305,7 +305,8 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
         if not kalshi_team or line is None:
             return None
 
-        best = spread_index.get((kalshi_team, line))
+        entries = spread_index.get((kalshi_team, line))
+        best = entries[0] if entries else None
         if not best:
             return None
         event_title = best.get("event_title", "")
@@ -419,7 +420,7 @@ def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike):
     return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, "MLB")
 
 
-def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
+def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hint=None):
     """Match UCL Kalshi market to Polymarket.
 
     Polymarket soccer match structure (observed):
@@ -446,6 +447,49 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
     else:
         target_type = "moneyline"
 
+    if target_type == "spreads":
+        # UCL spread titles: "Barcelona wins by over 1.5 goals?" — single team only.
+        # Polymarket spread_index uses full club names (e.g. "galatasaray sk"), so
+        # partial-match the key team. Use opponent_hint to pick the right game when
+        # a team has entries for multiple concurrent events.
+        fav_match = re.match(r'^(.+?)\s+wins\s+by\s+over\s+([\d.]+)', title, re.I)
+        if not fav_match:
+            return None
+        fav_team = fav_match.group(1).strip().lower()
+        line = abs(float(fav_match.group(2)))
+        opp_hint = opponent_hint.lower() if opponent_hint else None
+        # Split hint into tokens for fuzzy matching (handles unicode variants like Bodø vs Bodoe)
+        opp_tokens = [p for p in re.split(r'[\s/\-]+', opp_hint) if len(p) >= 3] if opp_hint else []
+
+        best = None
+        for (key_team, key_line), entries in spread_index.items():
+            if key_line != line or not (fav_team in key_team or key_team in fav_team):
+                continue
+            for entry in entries:
+                event_lower = entry.get("event_title", "").lower()
+                # If we have an opponent hint, require at least one token to appear in the event title
+                if opp_tokens and not any(tok in event_lower for tok in opp_tokens):
+                    continue
+                best = entry
+                break
+            if best:
+                break
+
+        if not best:
+            return None
+        event_title = re.sub(r"\s*-\s*More Markets\s*$", "", best.get("event_title", ""), flags=re.I)
+        t1, t2 = _extract_poly_team_names(event_title)
+        opponent = None
+        if t1 and t2:
+            opponent = t2 if (fav_team in t1 or t1 in fav_team) else t1
+        return {
+            "poly_yes": best["outcome1_ask"],
+            "poly_no": best["outcome2_ask"],
+            "poly_volume": best["volume"],
+            "poly_question": best["question"],
+            "spread_opponent": opponent.title() if opponent else None,
+        }
+
     # Extract club names from Kalshi title: "Bayern Munich vs Atalanta Winner?"
     match = re.match(
         r"^(.+?)\s+(?:at|vs\.?)\s+(.+?)(?:\s*[:?]|\s+Winner|\s+Total|\s+Spread|\s+Goals)",
@@ -457,21 +501,6 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
     club2 = match.group(2).strip().lower()
 
     is_draw = detail_lower == "tie"
-
-    if target_type == "spreads" and spread_index is not None:
-        if floor_strike is None:
-            return None
-        line = abs(floor_strike)
-        for club in [club1, club2]:
-            best = spread_index.get((club, line))
-            if best:
-                return {
-                    "poly_yes": best["outcome1_ask"],
-                    "poly_no": best["outcome2_ask"],
-                    "poly_volume": best["volume"],
-                    "poly_question": best["question"],
-                }
-        return None
 
     # Build index key from club names
     key = frozenset([club1, club2])
@@ -566,7 +595,7 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike):
     return None
 
 
-def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None):
+def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None, ucl_opponents=None):
     """Dispatch to per-sport matching handler."""
     sport_prefix = kalshi_data["sport"].split(" - ")[0]
     if sport_prefix in ("NBA", "NHL"):
@@ -574,5 +603,10 @@ def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=No
     if sport_prefix == "MLB":
         return _match_mlb(kalshi_data, poly_index, spread_index, floor_strike)
     if sport_prefix == "UCL":
-        return _match_ucl(kalshi_data, poly_index, spread_index, floor_strike)
+        opponent_hint = None
+        if ucl_opponents and kalshi_data["sport"] == "UCL - Spread":
+            fav_m = re.match(r'^(.+?)\s+wins\s+by\s+over', kalshi_data["title"], re.I)
+            if fav_m:
+                opponent_hint = ucl_opponents.get(fav_m.group(1).strip().lower())
+        return _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hint=opponent_hint)
     return None

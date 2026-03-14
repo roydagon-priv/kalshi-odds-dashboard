@@ -74,6 +74,7 @@ def build_kalshi_client(api_key_id, private_key_pem):
 
 
 def fetch_series_markets(get, sport_name, series_ticker):
+    now = datetime.now(timezone.utc)
     markets = []
     cursor = None
     page = 0
@@ -88,7 +89,16 @@ def fetch_series_markets(get, sport_name, series_ticker):
             print(f"Error fetching {sport_name} page {page}: {e}", file=sys.stderr)
             break
         batch = data.get("markets") or []
-        markets.extend(batch)
+        for m in batch:
+            exp = m.get("expected_expiration_time")
+            if exp:
+                try:
+                    exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                    if exp_dt < now:
+                        continue  # skip stale markets from past seasons
+                except ValueError:
+                    pass
+            markets.append(m)
         cursor = data.get("cursor")
         if not cursor:
             break

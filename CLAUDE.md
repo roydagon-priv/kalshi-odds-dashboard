@@ -26,13 +26,26 @@ Interactive HTML dashboard displaying live sports (and eventually politics) odds
 |-------|-------------|----------------|
 | NBA | Game Winner, Total Points, Spread | KXNBAGAME, KXNBATOTAL, KXNBASPREAD |
 | NHL | Game Winner, Total Points, Spread | KXNHLGAME, KXNHLTOTAL, KXNHLSPREAD |
+| UCL | Match Winner, Spread | KXUCLGAME, KXUCLSPREAD |
+| MLB | Game Winner, Total Points, Spread | KXMLBGAME, KXMLBTOTAL, KXMLBSPREAD |
 | F1 | Race Winner, Pole Position, Fastest Lap, Podium, Top 5, Top 10 | KXF1RACE, KXF1POLE, KXF1FASTLAP, KXF1RACEPODIUM, KXF1TOP5, KXF1TOP10 |
 
 ### Polymarket Matching (active)
 - NBA and NHL: moneyline, totals (O/U threshold), spreads
-- Matching uses team-name normalization (`matching.py` city→team maps)
+- UCL: moneyline (draw support), spreads — spread titles are `"Team wins by over N.5 goals?"` (single-team format, not "A vs B")
+- MLB: moneyline, totals, spreads
 - F1: no Polymarket match (returns `None`)
 - Arb spread calculated only for non-winner markets (totals/spreads) where both platforms have prices
+
+### Known Issues
+- **Spread matching regression**: The `spread_index` list-based storage + UCL opponent-hint filtering introduced in the UCL spread fix has broken spread matching for other markets (NBA, NHL, MLB). Needs a focused debugging pass — likely the list-based lookup or hint filtering leaking into non-UCL paths.
+- **F1 Polymarket matching not implemented**: Polymarket now has F1 markets (race winner, etc.). `_match_f1` or similar needs to be added to `matching.py`; currently `match_polymarket` returns `None` for F1.
+
+### UCL Spread Matching Notes
+- Kalshi UCL spread titles use single-team format: `"Barcelona wins by over 1.5 goals?"` (no opponent in title)
+- `spread_index` stores entries as lists per `(team, line)` key to handle same-team domestic+UCL collisions
+- Opponent disambiguation: `dashboard_generator.py` pre-builds `ucl_opponents` dict from `KXUCLGAME` titles, passed to `match_polymarket` as `ucl_opponents`
+- Token-based hint filtering splits on `[\s/\-]+` with `len >= 3` to handle Unicode variants (e.g. "Bodoe/Glimt" ↔ "FK Bodø/Glimt" matched via "glimt")
 
 ## Planned Expansions
 
@@ -45,10 +58,9 @@ These are the priority additions. Each requires:
 | Sport | Notes |
 |-------|-------|
 | NFL | Offseason until ~Sept; series tickers likely KXNFLGAME/TOTAL/SPREAD |
-| MLB | Season starts ~April; large volume |
 | NCAAB | March Madness has heavy Kalshi activity |
 | NCAAF | College football (fall) |
-| Soccer (PL/UCL) | Polymarket match harder — team names usually consistent |
+| Soccer (PL) | Premier League; team names usually consistent with Polymarket |
 | Tennis (majors) | Player-vs-player, no team maps needed |
 | Golf (PGA/Majors) | Multi-outcome markets, different structure |
 | MMA/UFC | Fighter names, binary outcome |

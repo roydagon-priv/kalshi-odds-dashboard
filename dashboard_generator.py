@@ -71,7 +71,7 @@ def extract_market_data(market, sport_name="", poly_match=None):
     sub_title_lower = (market.get("yes_sub_title") or "").lower()
     if "total" in sport_cat:
         market_type = "totals"
-    elif "spread" in sport_cat:
+    elif "spread" in sport_cat or "run line" in sport_cat:
         market_type = "spread"
     elif sub_title_lower == "tie":
         # UCL draw markets: yes_sub_title is "Tie", sport_name contains "winner"
@@ -101,11 +101,13 @@ def extract_market_data(market, sport_name="", poly_match=None):
     else:
         sport_prefix = ""
     display_title = substitute_teams_in_title(raw_title, sport_prefix) if sport_prefix else raw_title
+    raw_detail = (market.get("yes_sub_title") or "").strip()
+    display_detail = substitute_teams_in_title(raw_detail, sport_prefix) if sport_prefix else raw_detail
 
     return {
         "ticker": market.get("ticker", ""),
         "title": display_title,
-        "detail": (market.get("yes_sub_title") or "").strip(),
+        "detail": display_detail,
         "sport": sport_name,
         "market_type": market_type,
         "game_date": game_date,
@@ -921,6 +923,16 @@ def main():
                 time.sleep(REFRESH_INTERVAL)
                 continue
 
+            # Build UCL team→opponent map from game winner titles (for spread disambiguation)
+            ucl_opponents = {}
+            for m_obj, s_name in sports_markets:
+                if s_name == "UCL - Match Winner":
+                    mv = re.match(r"^(.+?)\s+vs\.?\s+(.+?)\s+Winner\??", m_obj.get("title", ""), re.I)
+                    if mv:
+                        t1, t2 = mv.group(1).strip(), mv.group(2).strip()
+                        ucl_opponents[t1.lower()] = t2
+                        ucl_opponents[t2.lower()] = t1
+
             # Build preliminary data for matching, then enrich with Polymarket
             markets_data = []
             for market_obj, sport_name in sports_markets:
@@ -931,7 +943,7 @@ def main():
                 }
                 raw_strike = market_obj.get("floor_strike")
                 floor_strike = float(raw_strike) if raw_strike is not None else None
-                poly_match = match_polymarket(preliminary, poly_index, spread_index=spread_index, floor_strike=floor_strike)
+                poly_match = match_polymarket(preliminary, poly_index, spread_index=spread_index, floor_strike=floor_strike, ucl_opponents=ucl_opponents)
                 if poly_match:
                     poly_matched += 1
                 md = extract_market_data(market_obj, sport_name, poly_match)
