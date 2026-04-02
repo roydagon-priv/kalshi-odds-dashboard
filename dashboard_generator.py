@@ -914,9 +914,9 @@ def main():
 
             print("  Fetching Polymarket sports...")
             poly_events = fetch_polymarket_sports()
-            poly_index, spread_index = build_polymarket_index(poly_events)
+            poly_index, spread_index, f1_index = build_polymarket_index(poly_events)
             poly_matched = 0
-            print(f"    {len(poly_events)} Polymarket events, {len(poly_index)} game keys, {len(spread_index)} spread lines")
+            print(f"    {len(poly_events)} Polymarket events, {len(poly_index)} game keys, {len(spread_index)} spread lines, {len(f1_index)} F1 entries")
 
             if not sports_markets:
                 print("  No sports markets found.")
@@ -943,7 +943,10 @@ def main():
                 }
                 raw_strike = market_obj.get("floor_strike")
                 floor_strike = float(raw_strike) if raw_strike is not None else None
-                poly_match = match_polymarket(preliminary, poly_index, spread_index=spread_index, floor_strike=floor_strike, ucl_opponents=ucl_opponents)
+                # Extract game date from Kalshi expiration for series disambiguation
+                exp = market_obj.get("expected_expiration_time") or ""
+                game_date = exp[:10] if len(exp) >= 10 else None
+                poly_match = match_polymarket(preliminary, poly_index, spread_index=spread_index, floor_strike=floor_strike, ucl_opponents=ucl_opponents, f1_index=f1_index, game_date=game_date)
                 if poly_match:
                     poly_matched += 1
                 md = extract_market_data(market_obj, sport_name, poly_match)

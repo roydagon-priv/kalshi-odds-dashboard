@@ -130,6 +130,15 @@ def safe_float(val, default=0.0):
         return default
 
 
+def _filter_by_date(entries, game_date):
+    """Filter index entries to those matching the given game date (YYYY-MM-DD).
+    Returns filtered list if any match, otherwise returns the original list as fallback."""
+    if not game_date or not entries:
+        return entries
+    matched = [e for e in entries if e.get("game_date") == game_date]
+    return matched if matched else entries
+
+
 # ---------------------------------------------------------------------------
 # Title helpers
 # ---------------------------------------------------------------------------
@@ -155,7 +164,9 @@ def _extract_poly_team_names(title):
     """Parse 'Team A vs. Team B' → (team_a_lower, team_b_lower)."""
     parts = re.split(r"\s+vs\.?\s+", title, maxsplit=1)
     if len(parts) == 2:
-        return parts[0].strip().lower(), parts[1].strip().lower()
+        t1 = parts[0].strip().lower()
+        t2 = re.split(r"\s*[:\?]", parts[1], maxsplit=1)[0].strip().lower()
+        return t1, t2
     return None, None
 
 
@@ -182,6 +193,29 @@ def _kalshi_title_to_teams(title, sport_prefix, mapping=None):
     return teams
 
 
+def _extract_f1_driver(question):
+    """Extract (driver_lower, f1_type) from F1 Polymarket questions like 'Will Verstappen win the GP?'"""
+    q_lower = question.lower()
+    if "fastest lap" in q_lower:
+        f1_type = "fastestlap"
+    elif "pole" in q_lower:
+        f1_type = "pole"
+    elif "podium" in q_lower or "top 3" in q_lower or "top three" in q_lower:
+        f1_type = "podium"
+    elif "top 5" in q_lower or "top five" in q_lower:
+        f1_type = "top5"
+    elif "top 10" in q_lower or "top ten" in q_lower:
+        f1_type = "top10"
+    elif "win" in q_lower:
+        f1_type = "win"
+    else:
+        return None, None
+    m = re.match(r"will\s+(.+?)\s+(?:win|get|finish|set)", question, re.I)
+    if m:
+        return m.group(1).strip().lower(), f1_type
+    return None, None
+
+
 def _extract_ou_threshold(question):
     """Extract O/U threshold from Polymarket question like 'Teams: O/U 6.5' → 6.5."""
     m = re.search(r"O/U\s+([\d.]+)", question)
@@ -205,19 +239,52 @@ def _extract_spread_team(question):
 # ---------------------------------------------------------------------------
 
 def build_polymarket_index(poly_events):
-    """Build two lookups:
+    """Build three lookups:
       index: frozenset({team1, team2}) → list of poly dicts  (moneyline/totals)
-      spread_index: (favored_team_lower, line) → poly dict    (spreads, one entry per line)
-    Returns (index, spread_index).
+      spread_index: (favored_team_lower, line) → list of poly dicts  (spreads)
+      f1_index: (driver_lower, f1_type) → list of poly dicts  (F1 markets)
+    Returns (index, spread_index, f1_index).
     """
     index = {}
     spread_index = {}
+    f1_index = {}
+    _GAME_TYPES = {"moneyline", "totals", "spreads"}
     for event in poly_events:
         for mkt in event.get("markets", []):
-            smt = mkt.get("sportsMarketType", "")
-            if smt not in ("moneyline", "totals", "spreads"):
-                continue
+            smt = mkt.get("sportsMarketType") or ""
             question = mkt.get("question", "")
+
+            # Only index markets with a recognized game-level sportsMarketType.
+            # Player props (assists, rebounds, points), first-half variants,
+            # and other non-game types are skipped to avoid index pollution.
+            if smt not in _GAME_TYPES:
+                # For untyped markets, try F1 indexing — but only if the event
+                # is not a team matchup (avoid F1-indexing season futures).
+                if not smt and "vs" not in event.get("title", "").lower():
+                    # Only try F1 indexing for events that look like F1 races
+                    evt_lower = event.get("title", "").lower()
+                    is_f1_event = any(kw in evt_lower for kw in ("grand prix", " gp", "f1", "formula"))
+                    f1_driver, f1_type = _extract_f1_driver(question) if is_f1_event else (None, None)
+                    if f1_driver and f1_type:
+                        prices = json.loads(mkt.get("outcomePrices", "[]"))
+                        p1 = safe_float(prices[0]) if len(prices) > 0 else 0.0
+                        p2 = safe_float(prices[1]) if len(prices) > 1 else 0.0
+                        best_bid = safe_float(mkt.get("bestBid"))
+                        best_ask = safe_float(mkt.get("bestAsk"))
+                        entry = {
+                            "question": question,
+                            "outcome1": "",
+                            "outcome1_ask": best_ask if best_ask else p1,
+                            "outcome2": "",
+                            "outcome2_ask": (1 - best_bid) if best_bid else p2,
+                            "volume": safe_float(mkt.get("volume")),
+                        }
+                        f1_index.setdefault((f1_driver, f1_type), []).append(entry)
+                continue
+
+            # Extract game date from gameStartTime (e.g. "2026-04-03 01:40:00+00" → "2026-04-03")
+            gst = mkt.get("gameStartTime") or ""
+            game_date = gst[:10] if len(gst) >= 10 else ""
 
             prices = json.loads(mkt.get("outcomePrices", "[]"))
             outcomes = json.loads(mkt.get("outcomes", "[]"))
@@ -236,6 +303,7 @@ def build_polymarket_index(poly_events):
                 "volume": safe_float(mkt.get("volume")),
                 "market_type": smt,
                 "threshold": _extract_ou_threshold(question),
+                "game_date": game_date,
             }
 
             if smt == "spreads":
@@ -257,10 +325,10 @@ def build_polymarket_index(poly_events):
                 key = frozenset([t1, t2])
                 index.setdefault(key, []).append(entry)
 
-    return index, spread_index
+    return index, spread_index, f1_index
 
 
-def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix):
+def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix, game_date=None):
     """Match NBA, NHL, or MLB Kalshi market to Polymarket."""
     sport_cat = kalshi_data["sport"]
     target_type = "moneyline"
@@ -306,6 +374,13 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
             return None
 
         entries = spread_index.get((kalshi_team, line))
+        if not entries:
+            # Partial match: Polymarket may use full "city team" name vs just "team"
+            for (key_team, key_line), ents in spread_index.items():
+                if key_line == line and (kalshi_team in key_team or key_team in kalshi_team):
+                    entries = ents
+                    break
+        entries = _filter_by_date(entries, game_date) if entries else entries
         best = entries[0] if entries else None
         if not best:
             return None
@@ -329,7 +404,22 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
     key = frozenset(kalshi_teams)
     poly_markets = poly_index.get(key)
     if not poly_markets:
+        # Fuzzy fallback: Polymarket may use "city team" (e.g. "atlanta braves")
+        # while Kalshi maps to just the team name ("braves"). Check if each Kalshi
+        # team name appears as a substring of a Poly index key member.
+        kalshi_list = sorted(kalshi_teams)
+        for pkey, pmarkets in poly_index.items():
+            plist = sorted(pkey)
+            if len(plist) != len(kalshi_list):
+                continue
+            if all(any(kt in pt for pt in plist) for kt in kalshi_list):
+                poly_markets = pmarkets
+                break
+    if not poly_markets:
         return None
+
+    # Filter to same-date markets (critical for MLB series where teams play multiple games)
+    poly_markets = _filter_by_date(poly_markets, game_date)
 
     best = None
     if target_type == "totals" and floor_strike is not None:
@@ -415,12 +505,56 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
         }
 
 
-def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike):
+def _match_f1(kalshi_data, f1_index):
+    """Match F1 Kalshi market to Polymarket by driver name and market type."""
+    if not f1_index:
+        return None
+    sport_cat = kalshi_data["sport"]
+    driver = kalshi_data.get("detail", "").strip().lower()
+    if not driver:
+        return None
+
+    if "Race Winner" in sport_cat:
+        f1_type = "win"
+    elif "Pole" in sport_cat:
+        f1_type = "pole"
+    elif "Fastest Lap" in sport_cat:
+        f1_type = "fastestlap"
+    elif "Podium" in sport_cat:
+        f1_type = "podium"
+    elif "Top 5" in sport_cat:
+        f1_type = "top5"
+    elif "Top 10" in sport_cat:
+        f1_type = "top10"
+    else:
+        return None
+
+    entries = f1_index.get((driver, f1_type))
+    if not entries:
+        # Partial driver name match (e.g. "max verstappen" vs "verstappen")
+        driver_parts = [p for p in driver.split() if len(p) > 3]
+        for (key_driver, key_type), ents in f1_index.items():
+            if key_type == f1_type and any(p in key_driver for p in driver_parts):
+                entries = ents
+                break
+    if not entries:
+        return None
+
+    best = entries[0]
+    return {
+        "poly_yes": best["outcome1_ask"],
+        "poly_no": best["outcome2_ask"],
+        "poly_volume": best["volume"],
+        "poly_question": best["question"],
+    }
+
+
+def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike, game_date=None):
     """Match MLB Kalshi market to Polymarket. Same structure as NBA/NHL."""
-    return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, "MLB")
+    return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, "MLB", game_date=game_date)
 
 
-def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hint=None):
+def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hint=None, game_date=None):
     """Match UCL Kalshi market to Polymarket.
 
     Polymarket soccer match structure (observed):
@@ -595,18 +729,20 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hin
     return None
 
 
-def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None, ucl_opponents=None):
+def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None, ucl_opponents=None, f1_index=None, game_date=None):
     """Dispatch to per-sport matching handler."""
     sport_prefix = kalshi_data["sport"].split(" - ")[0]
     if sport_prefix in ("NBA", "NHL"):
-        return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix)
+        return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix, game_date=game_date)
     if sport_prefix == "MLB":
-        return _match_mlb(kalshi_data, poly_index, spread_index, floor_strike)
+        return _match_mlb(kalshi_data, poly_index, spread_index, floor_strike, game_date=game_date)
     if sport_prefix == "UCL":
         opponent_hint = None
         if ucl_opponents and kalshi_data["sport"] == "UCL - Spread":
             fav_m = re.match(r'^(.+?)\s+wins\s+by\s+over', kalshi_data["title"], re.I)
             if fav_m:
                 opponent_hint = ucl_opponents.get(fav_m.group(1).strip().lower())
-        return _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hint=opponent_hint)
+        return _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hint=opponent_hint, game_date=game_date)
+    if sport_prefix == "F1":
+        return _match_f1(kalshi_data, f1_index)
     return None
