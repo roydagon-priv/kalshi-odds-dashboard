@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from kalshi_fetcher import build_kalshi_client, fetch_all_sports_markets
-from matching import build_polymarket_index, match_polymarket, safe_float, substitute_teams_in_title
+from matching import build_polymarket_index, get_sport_prefix, match_polymarket, safe_float, substitute_teams_in_title
 from polymarket_fetcher import fetch_polymarket_sports
 
 load_dotenv()
@@ -90,16 +90,7 @@ def extract_market_data(market, sport_name="", poly_match=None):
         arb_spread_cents = None
 
     raw_title = market.get("title", "")
-    if "NBA" in sport_name.upper():
-        sport_prefix = "NBA"
-    elif "NHL" in sport_name.upper():
-        sport_prefix = "NHL"
-    elif "MLB" in sport_name.upper():
-        sport_prefix = "MLB"
-    elif "UCL" in sport_name.upper():
-        sport_prefix = "UCL"
-    else:
-        sport_prefix = ""
+    sport_prefix = get_sport_prefix(sport_name)
     display_title = substitute_teams_in_title(raw_title, sport_prefix) if sport_prefix else raw_title
     raw_detail = (market.get("yes_sub_title") or "").strip()
     display_detail = substitute_teams_in_title(raw_detail, sport_prefix) if sport_prefix else raw_detail

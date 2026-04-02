@@ -130,6 +130,19 @@ def safe_float(val, default=0.0):
         return default
 
 
+def _build_match_result(best, spread_opponent=None):
+    """Construct the standard Polymarket match result dict."""
+    result = {
+        "poly_yes": best["outcome1_ask"],
+        "poly_no": best["outcome2_ask"],
+        "poly_volume": best["volume"],
+        "poly_question": best["question"],
+    }
+    if spread_opponent is not None:
+        result["spread_opponent"] = spread_opponent
+    return result
+
+
 def _filter_by_date(entries, game_date):
     """Filter index entries to those matching the given game date (YYYY-MM-DD).
     Returns filtered list if any match, otherwise returns the original list as fallback."""
@@ -389,13 +402,7 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
         opponent = None
         if t1 and t2:
             opponent = t2 if t1 == kalshi_team else t1 if t2 == kalshi_team else None
-        return {
-            "poly_yes": best["outcome1_ask"],
-            "poly_no": best["outcome2_ask"],
-            "poly_volume": best["volume"],
-            "poly_question": best["question"],
-            "spread_opponent": opponent,
-        }
+        return _build_match_result(best, spread_opponent=opponent)
 
     kalshi_teams = _kalshi_title_to_teams(kalshi_data["title"], sport_prefix)
     if len(kalshi_teams) < 2:
@@ -445,19 +452,10 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
     if target_type == "totals":
         o1_lower = best["outcome1"].lower()
         if "over" in o1_lower:
-            return {
-                "poly_yes": best["outcome1_ask"],
-                "poly_no": best["outcome2_ask"],
-                "poly_volume": best["volume"],
-                "poly_question": best["question"],
-            }
+            return _build_match_result(best)
         else:
-            return {
-                "poly_yes": best["outcome2_ask"],
-                "poly_no": best["outcome1_ask"],
-                "poly_volume": best["volume"],
-                "poly_question": best["question"],
-            }
+            swapped = dict(best, outcome1_ask=best["outcome2_ask"], outcome2_ask=best["outcome1_ask"])
+            return _build_match_result(swapped)
 
     detail = kalshi_data.get("detail", "").lower()
 
@@ -473,36 +471,17 @@ def _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport
                 break
 
     if not kalshi_yes_team:
-        return {
-            "poly_yes": best["outcome1_ask"],
-            "poly_no": best["outcome2_ask"],
-            "poly_volume": best["volume"],
-            "poly_question": best["question"],
-        }
+        return _build_match_result(best)
 
     o1_lower = best["outcome1"].lower()
     o2_lower = best["outcome2"].lower()
     if kalshi_yes_team in o1_lower:
-        return {
-            "poly_yes": best["outcome1_ask"],
-            "poly_no": best["outcome2_ask"],
-            "poly_volume": best["volume"],
-            "poly_question": best["question"],
-        }
+        return _build_match_result(best)
     elif kalshi_yes_team in o2_lower:
-        return {
-            "poly_yes": best["outcome2_ask"],
-            "poly_no": best["outcome1_ask"],
-            "poly_volume": best["volume"],
-            "poly_question": best["question"],
-        }
+        swapped = dict(best, outcome1_ask=best["outcome2_ask"], outcome2_ask=best["outcome1_ask"])
+        return _build_match_result(swapped)
     else:
-        return {
-            "poly_yes": best["outcome1_ask"],
-            "poly_no": best["outcome2_ask"],
-            "poly_volume": best["volume"],
-            "poly_question": best["question"],
-        }
+        return _build_match_result(best)
 
 
 def _match_f1(kalshi_data, f1_index):
@@ -541,12 +520,7 @@ def _match_f1(kalshi_data, f1_index):
         return None
 
     best = entries[0]
-    return {
-        "poly_yes": best["outcome1_ask"],
-        "poly_no": best["outcome2_ask"],
-        "poly_volume": best["volume"],
-        "poly_question": best["question"],
-    }
+    return _build_match_result(best)
 
 
 def _match_mlb(kalshi_data, poly_index, spread_index, floor_strike, game_date=None):
@@ -616,13 +590,7 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hin
         opponent = None
         if t1 and t2:
             opponent = t2 if (fav_team in t1 or t1 in fav_team) else t1
-        return {
-            "poly_yes": best["outcome1_ask"],
-            "poly_no": best["outcome2_ask"],
-            "poly_volume": best["volume"],
-            "poly_question": best["question"],
-            "spread_opponent": opponent.title() if opponent else None,
-        }
+        return _build_match_result(best, spread_opponent=opponent.title() if opponent else None)
 
     # Extract club names from Kalshi title: "Bayern Munich vs Atalanta Winner?"
     match = re.match(
@@ -662,19 +630,10 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hin
                 # outcomes=["Over","Under"]
                 o1_lower = pm["outcome1"].lower()
                 if "over" in o1_lower:
-                    return {
-                        "poly_yes": pm["outcome1_ask"],
-                        "poly_no": pm["outcome2_ask"],
-                        "poly_volume": pm["volume"],
-                        "poly_question": pm["question"],
-                    }
+                    return _build_match_result(pm)
                 else:
-                    return {
-                        "poly_yes": pm["outcome2_ask"],
-                        "poly_no": pm["outcome1_ask"],
-                        "poly_volume": pm["volume"],
-                        "poly_question": pm["question"],
-                    }
+                    swapped = dict(pm, outcome1_ask=pm["outcome2_ask"], outcome2_ask=pm["outcome1_ask"])
+                    return _build_match_result(swapped)
         return None
 
     # Moneyline: outcomes=["Yes","No"], club name is in the question text
@@ -685,12 +644,7 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hin
                 continue
             q_lower = pm["question"].lower()
             if "draw" in q_lower or "tie" in q_lower:
-                return {
-                    "poly_yes": pm["outcome1_ask"],
-                    "poly_no": pm["outcome2_ask"],
-                    "poly_volume": pm["volume"],
-                    "poly_question": pm["question"],
-                }
+                return _build_match_result(pm)
         return None
 
     # Regular moneyline: find question "Will <yes_club> win ..."
@@ -706,12 +660,7 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hin
             continue
         # Match by club name in question
         if yes_club and yes_club in q_lower:
-            return {
-                "poly_yes": pm["outcome1_ask"],  # outcome1=Yes
-                "poly_no": pm["outcome2_ask"],   # outcome2=No
-                "poly_volume": pm["volume"],
-                "poly_question": pm["question"],
-            }
+            return _build_match_result(pm)
 
     # Fallback: return first non-draw moneyline if no club name match
     for pm in poly_markets:
@@ -720,18 +669,22 @@ def _match_ucl(kalshi_data, poly_index, spread_index, floor_strike, opponent_hin
         q_lower = pm["question"].lower()
         if "draw" in q_lower or "tie" in q_lower:
             continue
-        return {
-            "poly_yes": pm["outcome1_ask"],
-            "poly_no": pm["outcome2_ask"],
-            "poly_volume": pm["volume"],
-            "poly_question": pm["question"],
-        }
+        return _build_match_result(pm)
     return None
+
+
+def get_sport_prefix(sport_name):
+    """Extract the sport prefix (NBA, NHL, MLB, UCL, F1) from a sport name string."""
+    upper = sport_name.upper()
+    for prefix in ("NBA", "NHL", "MLB", "UCL", "F1"):
+        if prefix in upper:
+            return prefix
+    return ""
 
 
 def match_polymarket(kalshi_data, poly_index, spread_index=None, floor_strike=None, ucl_opponents=None, f1_index=None, game_date=None):
     """Dispatch to per-sport matching handler."""
-    sport_prefix = kalshi_data["sport"].split(" - ")[0]
+    sport_prefix = get_sport_prefix(kalshi_data["sport"])
     if sport_prefix in ("NBA", "NHL"):
         return _match_team_sport(kalshi_data, poly_index, spread_index, floor_strike, sport_prefix, game_date=game_date)
     if sport_prefix == "MLB":

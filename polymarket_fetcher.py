@@ -7,14 +7,22 @@ import requests
 POLYMARKET_GAMMA_URL = "https://gamma-api.polymarket.com/events"
 
 # Tag IDs for sports leagues we care about
-TAG_IDS = [745, 100977, 1234, 100381, 450, 102070, 899]  # NBA, UCL, UCL-alt, MLB, NFL, F1, NHL
+SPORT_TAGS = {
+    "nba": [745],
+    "ucl": [100977, 1234],
+    "mlb": [100381],
+    "nfl": [450],
+    "f1": [102070],
+    "nhl": [899],
+}
 
 
 def fetch_polymarket_sports():
     """Fetch active sports events from Polymarket Gamma API."""
     seen_ids = set()
     all_events = []
-    for tag_id in TAG_IDS:
+    tag_ids = [tid for tags in SPORT_TAGS.values() for tid in tags]
+    for tag_id in tag_ids:
         offset = 0
         limit = 100
         while True:
