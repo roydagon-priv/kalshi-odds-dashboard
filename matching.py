@@ -276,7 +276,7 @@ def build_polymarket_index(poly_events):
                             "outcome1": "",
                             "outcome1_ask": best_ask if best_ask else p1,
                             "outcome2": "",
-                            "outcome2_ask": (1 - best_bid) if best_bid else p2,
+                            "outcome2_ask": (1 - best_ask) if best_ask else p2,
                             "volume": safe_float(mkt.get("volume")),
                         }
                         f1_index.setdefault((f1_driver, f1_type), []).append(entry)
@@ -295,7 +295,7 @@ def build_polymarket_index(poly_events):
             best_bid = safe_float(mkt.get("bestBid"))
             best_ask = safe_float(mkt.get("bestAsk"))
             o1_ask = best_ask if best_ask else p1
-            o2_ask = (1 - best_bid) if best_bid else p2
+            o2_ask = (1 - best_ask) if best_ask else p2
             entry = {
                 "question": question,
                 "outcome1": o1, "outcome1_ask": o1_ask,

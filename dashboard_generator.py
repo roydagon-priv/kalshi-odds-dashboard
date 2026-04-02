@@ -51,7 +51,7 @@ def extract_market_data(market, sport_name="", poly_match=None):
     no_ask = safe_float(market.get("no_ask_dollars"))
     volume = safe_float(market.get("volume_fp"))
 
-    midpoint = (yes_bid + yes_ask) / 2 if (yes_bid or yes_ask) else 0.0
+    midpoint = (yes_bid + yes_ask) / 2 if (yes_bid and yes_ask) else 0.0
     implied_prob = midpoint * 100
     spread_cents = (yes_ask - yes_bid) * 100
 
@@ -63,7 +63,7 @@ def extract_market_data(market, sport_name="", poly_match=None):
 
     # Game date from expected_expiration_time (ISO string in UTC)
     exp = market.get("expected_expiration_time")
-    game_date = exp[:10] if exp else ""
+    game_date = exp[:10] if exp and len(exp) >= 10 else ""
 
     # Market type: winner / totals / spread / other
     sport_cat = sport_name.lower()
@@ -82,7 +82,7 @@ def extract_market_data(market, sport_name="", poly_match=None):
     else:
         market_type = "other"
 
-    if poly_yes is not None and poly_no is not None and market_type not in ("winner", "draw"):
+    if poly_yes is not None and poly_no is not None and market_type != "draw":
         cost_dir1 = yes_ask + poly_no    # buy YES on Kalshi, NO on Poly
         cost_dir2 = poly_yes + no_ask    # buy YES on Poly, NO on Kalshi
         arb_spread_cents = (1.0 - min(cost_dir1, cost_dir2)) * 100
